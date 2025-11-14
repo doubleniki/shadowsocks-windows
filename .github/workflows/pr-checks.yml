@@ -177,7 +177,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        $testAssembly = "test\bin\x86\Debug\ShadowsocksTest.dll"
+        $testAssembly = "test\bin\x86\Debug\Shadowsocks.Test.dll"
         if (Test-Path $testAssembly) {
           vstest.console.exe $testAssembly /logger:"console;verbosity=normal"
         } else {
