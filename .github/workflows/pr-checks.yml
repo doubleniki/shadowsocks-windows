@@ -107,8 +107,11 @@ jobs:
 
         $allMatches = @()
         foreach ($path in $criticalPaths) {
-          $matches = @(Select-String -Path "$path\*.cs" -Pattern $todoPattern -CaseSensitive:$false)
-          $allMatches += $matches
+          $files = Get-ChildItem -Path "$path\*.cs" -Recurse -File -ErrorAction SilentlyContinue
+          if ($files) {
+            $matches = @($files | Select-String -Pattern $todoPattern -CaseSensitive:$false)
+            $allMatches += $matches
+          }
         }
 
         if ($allMatches.Count -gt 0) {
