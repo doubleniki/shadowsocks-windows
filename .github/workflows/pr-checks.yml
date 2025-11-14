@@ -142,18 +142,25 @@ jobs:
           'secret\s*=\s*"[^"]+"'
         )
 
+        $csFiles = Get-ChildItem -Path "shadowsocks-csharp" -Filter "*.cs" -Recurse -File -ErrorAction SilentlyContinue
+
         $foundIssues = $false
-        foreach ($pattern in $patterns) {
-          $matches = @(Select-String -Path "shadowsocks-csharp/**/*.cs" -Pattern $pattern -CaseSensitive:$false)
-          if ($matches.Count -gt 0) {
-            Write-Host "⚠️ Potential hardcoded credential found:"
-            $matches | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
-            $foundIssues = $true
+        if ($csFiles) {
+          foreach ($pattern in $patterns) {
+            $matches = @($csFiles | Select-String -Pattern $pattern -CaseSensitive:$false)
+            if ($matches.Count -gt 0) {
+              Write-Host "⚠️ Potential hardcoded credential found:"
+              $matches | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
+              $foundIssues = $true
+            }
           }
         }
 
         # Check for catch (Exception) without proper handling
-        $broadCatch = @(Select-String -Path "shadowsocks-csharp/**/*.cs" -Pattern "catch\s*\(Exception[^)]*\)" -CaseSensitive:$false)
+        $broadCatch = @()
+        if ($csFiles) {
+          $broadCatch = @($csFiles | Select-String -Pattern "catch\s*\(Exception[^)]*\)" -CaseSensitive:$false)
+        }
         if ($broadCatch.Count -gt 0) {
           Write-Host "⚠️ Found broad exception catching (catch Exception):"
           $broadCatch | Select-Object -First 5 | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
