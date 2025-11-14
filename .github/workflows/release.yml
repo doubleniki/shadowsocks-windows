@@ -31,11 +31,8 @@ jobs:
     - name: Restore NuGet packages
       run: nuget restore shadowsocks-windows.sln
 
-    - name: Build x86 Release
+    - name: Build Release
       run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x86 /m /v:minimal
-
-    - name: Build x64 Release
-      run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
     - name: Create release packages
       run: |
@@ -57,36 +54,21 @@ jobs:
         }
 
         # Process x86 build
-        $x86Folder = "shadowsocks-csharp\bin\x86\Release"
-        $x86Exe = "$x86Folder\Shadowsocks.exe"
-        $x86ExeHash = "$x86Exe.hash"
-        $x86Zip = "Shadowsocks-$version-x86.zip"
-        $x86ZipHash = "$x86Zip.hash"
+        $buildFolder = "shadowsocks-csharp\bin\x86\Release"
+        $exe = "$buildFolder\Shadowsocks.exe"
+        $exeHash = "$exe.hash"
+        $zip = "Shadowsocks-$version.zip"
+        $zipHash = "$zip.hash"
 
-        Get-FileHashes -file $x86Exe | Out-File -FilePath $x86ExeHash -Encoding UTF8
+        Get-FileHashes -file $exe | Out-File -FilePath $exeHash -Encoding UTF8
 
-        $x86Items = @($x86Exe, $x86ExeHash)
-        Get-ChildItem -Path $x86Folder -Directory | ForEach-Object { $x86Items += $_.FullName }
-        Compress-Archive -Path $x86Items -DestinationPath $x86Zip -Force
+        $items = @($exe, $exeHash)
+        Get-ChildItem -Path $buildFolder -Directory | ForEach-Object { $items += $_.FullName }
+        Compress-Archive -Path $items -DestinationPath $zip -Force
 
-        Get-FileHashes -file $x86Zip | Out-File -FilePath $x86ZipHash -Encoding UTF8
+        Get-FileHashes -file $zip | Out-File -FilePath $zipHash -Encoding UTF8
 
-        # Process x64 build
-        $x64Folder = "shadowsocks-csharp\bin\x64\Release"
-        $x64Exe = "$x64Folder\Shadowsocks.exe"
-        $x64ExeHash = "$x64Exe.hash"
-        $x64Zip = "Shadowsocks-$version-x64.zip"
-        $x64ZipHash = "$x64Zip.hash"
-
-        Get-FileHashes -file $x64Exe | Out-File -FilePath $x64ExeHash -Encoding UTF8
-
-        $x64Items = @($x64Exe, $x64ExeHash)
-        Get-ChildItem -Path $x64Folder -Directory | ForEach-Object { $x64Items += $_.FullName }
-        Compress-Archive -Path $x64Items -DestinationPath $x64Zip -Force
-
-        Get-FileHashes -file $x64Zip | Out-File -FilePath $x64ZipHash -Encoding UTF8
-
-        Write-Host "Release packages created successfully"
+        Write-Host "Release package created successfully"
       shell: pwsh
 
     - name: Generate changelog
@@ -109,11 +91,9 @@ jobs:
 
         ## Download
 
-        Choose the appropriate version for your system:
-        - **x86** - For 32-bit Windows systems
-        - **x64** - For 64-bit Windows systems (recommended)
+        This release includes a 32-bit (x86) build compatible with all Windows systems.
 
-        See the hash files (.hash) to verify the integrity of your download.
+        See the hash file (.hash) to verify the integrity of your download.
         "@
 
         # Output to file for GitHub Release
@@ -127,10 +107,8 @@ jobs:
       with:
         body_path: changelog.md
         files: |
-          Shadowsocks-${{ github.ref_name }}-x86.zip
-          Shadowsocks-${{ github.ref_name }}-x86.zip.hash
-          Shadowsocks-${{ github.ref_name }}-x64.zip
-          Shadowsocks-${{ github.ref_name }}-x64.zip.hash
+          Shadowsocks-${{ github.ref_name }}.zip
+          Shadowsocks-${{ github.ref_name }}.zip.hash
         draft: false
         prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
         generate_release_notes: true
