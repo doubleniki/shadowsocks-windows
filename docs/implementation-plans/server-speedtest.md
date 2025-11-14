@@ -417,17 +417,60 @@ namespace Shadowsocks.Services
     public class BandwidthTestService : IBandwidthTestService
     {
         private readonly ILogger<BandwidthTestService> _logger;
+        private readonly IConfiguration _configuration;
         private readonly HttpClient _httpClient;
 
-        private const string TestUrl = "http://speedtest.example.com/1MB.bin";
         private const int TestDurationSeconds = 10;
 
         public BandwidthTestService(
             ILogger<BandwidthTestService> logger,
+            IConfiguration configuration,
             IHttpClientFactory httpClientFactory)
         {
             _logger = logger;
+            _configuration = configuration;
             _httpClient = httpClientFactory.CreateClient("SpeedTest");
+        }
+
+        /// <summary>
+        /// Get test URL from configuration with fallback to default public endpoints
+        /// </summary>
+        private string GetTestUrl(int sizeInMB = 10)
+        {
+            // Check configuration first
+            var configuredUrl = _configuration["SpeedTest:DownloadUrl"];
+            if (!string.IsNullOrEmpty(configuredUrl))
+                return configuredUrl;
+
+            // Fallback to public speedtest endpoints
+            // Option 1: Cloudflare (reliable, global CDN)
+            // Generate random file to prevent caching
+            var randomParam = Guid.NewGuid().ToString("N");
+            return $"https://speed.cloudflare.com/__down?bytes={sizeInMB * 1024 * 1024}&r={randomParam}";
+
+            // Option 2: Fast.com (Netflix CDN) - requires their API
+            // return "https://api.fast.com/netflix/speedtest";
+
+            // Option 3: Your own CDN endpoint
+            // return _configuration["SpeedTest:CustomEndpoint"];
+        }
+
+        /// <summary>
+        /// Get upload test URL from configuration
+        /// </summary>
+        private string GetUploadUrl()
+        {
+            // Check configuration first
+            var configuredUrl = _configuration["SpeedTest:UploadUrl"];
+            if (!string.IsNullOrEmpty(configuredUrl))
+                return configuredUrl;
+
+            // Fallback to Cloudflare upload endpoint
+            var randomParam = Guid.NewGuid().ToString("N");
+            return $"https://speed.cloudflare.com/__up?r={randomParam}";
+
+            // Alternative: Use httpbin.org for testing (not recommended for production)
+            // return "https://httpbin.org/post";
         }
 
         public async Task<double> MeasureDownloadSpeedAsync(
@@ -448,8 +491,11 @@ namespace Shadowsocks.Services
                 var sw = Stopwatch.StartNew();
                 long totalBytes = 0;
 
-                // Download test data
-                var response = await client.GetAsync(TestUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+                // Download test data from configured endpoint
+                var testUrl = GetTestUrl(10); // 10 MB test file
+                _logger.LogDebug("Starting download speed test using {Url}", testUrl);
+
+                var response = await client.GetAsync(testUrl, HttpCompletionOption.ResponseHeadersRead, ct);
                 response.EnsureSuccessStatusCode();
 
                 using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -513,11 +559,14 @@ namespace Shadowsocks.Services
                 var sw = Stopwatch.StartNew();
                 long totalBytes = 0;
 
+                var uploadUrl = GetUploadUrl();
+                _logger.LogDebug("Starting upload speed test using {Url}", uploadUrl);
+
                 // Upload test
                 for (int i = 0; i < TestDurationSeconds && !ct.IsCancellationRequested; i++)
                 {
                     var content = new ByteArrayContent(uploadData);
-                    var response = await client.PostAsync(TestUrl, content, ct);
+                    var response = await client.PostAsync(uploadUrl, content, ct);
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -811,6 +860,405 @@ namespace Shadowsocks.Services
                 ServerId = serverId,
                 RecentResults = serverResults
             };
+        }
+    }
+}
+```
+
+---
+
+### 3.4 SpeedTest Endpoint Configuration
+
+#### Overview
+
+The bandwidth testing service requires reliable endpoints for measuring download and upload speeds. This section provides concrete options for configuring speedtest endpoints.
+
+#### Option A: Public Speedtest Endpoints (Recommended for Quick Start)
+
+**1. Cloudflare Speed Test (Recommended - Production Ready)**
+
+Cloudflare provides free, globally distributed speedtest endpoints:
+
+```json
+// appsettings.json
+{
+  "SpeedTest": {
+    "Provider": "Cloudflare",
+    "DownloadUrl": "https://speed.cloudflare.com/__down?bytes={size}",
+    "UploadUrl": "https://speed.cloudflare.com/__up",
+    "TestDurationSeconds": 10,
+    "DownloadSizeMB": 10
+  }
+}
+```
+
+**Features:**
+- ✅ Free, no API key required
+- ✅ Global CDN (200+ locations)
+- ✅ High reliability and uptime
+- ✅ Supports both download and upload tests
+- ✅ No rate limiting for reasonable use
+
+**Usage:**
+```csharp
+// Download: GET https://speed.cloudflare.com/__down?bytes=10485760
+// Upload: POST https://speed.cloudflare.com/__up
+```
+
+**2. Fast.com API (Netflix CDN)**
+
+Fast.com provides a JSON API for speed testing:
+
+```json
+{
+  "SpeedTest": {
+    "Provider": "Fast.com",
+    "ApiUrl": "https://api.fast.com/netflix/speedtest/v2",
+    "ApiKey": "required" // Obtain from Fast.com
+  }
+}
+```
+
+**Features:**
+- ✅ Backed by Netflix CDN
+- ✅ Accurate for streaming workloads
+- ⚠️ Requires API integration
+- ⚠️ Rate limiting may apply
+
+**3. LibreSpeed (Open Source)**
+
+```json
+{
+  "SpeedTest": {
+    "Provider": "LibreSpeed",
+    "BaseUrl": "https://librespeed.org",
+    "Endpoints": [
+      "https://speedtest1.example.com",
+      "https://speedtest2.example.com"
+    ]
+  }
+}
+```
+
+Public LibreSpeed instances: https://github.com/librespeed/speedtest/wiki/Public-Servers
+
+---
+
+#### Option B: Self-Hosted Speedtest Endpoint
+
+For organizations requiring full control, deploy a dedicated speedtest server.
+
+**Deployment Guide:**
+
+**1. Using LibreSpeed (Docker)**
+
+Create `docker-compose.yml`:
+```yaml
+version: '3'
+services:
+  speedtest:
+    image: linuxserver/librespeed:latest
+    container_name: shadowsocks-speedtest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+    ports:
+      - "8080:80"
+    volumes:
+      - ./config:/config
+    restart: unless-stopped
+```
+
+Deploy:
+```bash
+docker-compose up -d
+```
+
+Configure in Shadowsocks:
+```json
+{
+  "SpeedTest": {
+    "DownloadUrl": "http://your-server.com:8080/backend/garbage.php?size={size}",
+    "UploadUrl": "http://your-server.com:8080/backend/empty.php"
+  }
+}
+```
+
+**2. Using Nginx + Static Files**
+
+For simple download testing, serve static files via Nginx:
+
+```nginx
+# /etc/nginx/sites-available/speedtest
+server {
+    listen 80;
+    server_name speedtest.your-domain.com;
+
+    location /test-files/ {
+        alias /var/www/speedtest/;
+
+        # Disable caching
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+
+        # CORS headers
+        add_header Access-Control-Allow-Origin "*";
+
+        # Security headers
+        add_header X-Content-Type-Options "nosniff";
+    }
+
+    # Upload endpoint (returns 200 OK and discards data)
+    location /upload {
+        client_max_body_size 100M;
+
+        # Discard upload data
+        return 200 "OK";
+
+        add_header Access-Control-Allow-Origin "*";
+    }
+}
+```
+
+Generate test files:
+```bash
+mkdir -p /var/www/speedtest
+dd if=/dev/urandom of=/var/www/speedtest/1mb.bin bs=1M count=1
+dd if=/dev/urandom of=/var/www/speedtest/10mb.bin bs=1M count=10
+dd if=/dev/urandom of=/var/www/speedtest/100mb.bin bs=1M count=100
+```
+
+Configuration:
+```json
+{
+  "SpeedTest": {
+    "DownloadUrl": "https://speedtest.your-domain.com/test-files/10mb.bin",
+    "UploadUrl": "https://speedtest.your-domain.com/upload"
+  }
+}
+```
+
+**3. CDN-Hosted Test Files**
+
+Upload test files to your CDN (Cloudflare, AWS CloudFront, Azure CDN):
+
+```bash
+# Generate test files locally
+for size in 1 10 50 100; do
+  dd if=/dev/urandom of=${size}mb.bin bs=1M count=${size}
+done
+
+# Upload to S3 (example)
+aws s3 cp *.bin s3://your-bucket/speedtest-files/ --acl public-read
+```
+
+CloudFront configuration:
+```json
+{
+  "SpeedTest": {
+    "DownloadUrl": "https://d1234567890.cloudfront.net/speedtest-files/10mb.bin",
+    "UploadUrl": "https://your-api.com/speedtest/upload",
+    "CacheBusting": true  // Adds random parameter to prevent caching
+  }
+}
+```
+
+**Monitoring:**
+
+Add monitoring to track endpoint health:
+```bash
+# Prometheus metrics endpoint
+curl https://speedtest.your-domain.com/metrics
+```
+
+**Security Considerations:**
+- Enable HTTPS with valid SSL certificate
+- Implement rate limiting (e.g., 10 tests per IP per hour)
+- Set up monitoring and alerts
+- Consider DDoS protection (Cloudflare, AWS Shield)
+
+---
+
+#### Option C: Alternative Measurement Methods
+
+**1. Real Traffic Analysis (No External Endpoint Required)**
+
+Measure bandwidth by analyzing actual proxy traffic:
+
+```csharp
+public class TrafficAnalyzer : ITrafficAnalyzer
+{
+    private readonly ConcurrentQueue<TrafficSample> _samples = new();
+
+    public void RecordTraffic(long bytes, TimeSpan duration)
+    {
+        _samples.Enqueue(new TrafficSample
+        {
+            Bytes = bytes,
+            Timestamp = DateTime.UtcNow,
+            Duration = duration
+        });
+
+        // Keep only last 5 minutes
+        while (_samples.TryPeek(out var oldest) &&
+               DateTime.UtcNow - oldest.Timestamp > TimeSpan.FromMinutes(5))
+        {
+            _samples.TryDequeue(out _);
+        }
+    }
+
+    public double GetAverageThroughput()
+    {
+        if (_samples.IsEmpty) return 0;
+
+        var totalBytes = _samples.Sum(s => s.Bytes);
+        var totalSeconds = _samples.Sum(s => s.Duration.TotalSeconds);
+
+        return (totalBytes * 8) / (totalSeconds * 1_000_000); // Mbps
+    }
+}
+```
+
+**2. Integrated Public APIs**
+
+Use existing speedtest APIs:
+
+```csharp
+// Ookla Speedtest API (requires agreement)
+// https://www.speedtest.net/apps/cli
+
+// M-Lab NDT7 Protocol (open source)
+// https://www.measurementlab.net/tests/ndt/
+
+public class MLab​NDT7Client
+{
+    public async Task<SpeedTestResult> RunTestAsync()
+    {
+        // Implement NDT7 WebSocket protocol
+        // See: https://github.com/m-lab/ndt-server/blob/master/spec/ndt7-protocol.md
+    }
+}
+```
+
+---
+
+#### Configuration File Examples
+
+**Complete appsettings.json:**
+
+```json
+{
+  "SpeedTest": {
+    // Provider: "Cloudflare", "Fast.com", "Custom", "Traffic"
+    "Provider": "Cloudflare",
+
+    // Cloudflare endpoints
+    "DownloadUrl": "https://speed.cloudflare.com/__down?bytes={size}",
+    "UploadUrl": "https://speed.cloudflare.com/__up",
+
+    // Test parameters
+    "TestDurationSeconds": 10,
+    "DownloadSizeMB": 10,
+    "UploadSizeMB": 5,
+    "ParallelConnections": 4,
+
+    // Retry configuration
+    "MaxRetries": 3,
+    "RetryDelaySeconds": 2,
+
+    // Cache busting
+    "CacheBusting": true,
+    "CacheBustingParameter": "r",
+
+    // Timeout settings
+    "ConnectionTimeoutSeconds": 30,
+    "TestTimeoutSeconds": 60,
+
+    // Fallback endpoints (tried in order if primary fails)
+    "FallbackEndpoints": [
+      {
+        "DownloadUrl": "https://speedtest-backup1.example.com/10mb.bin",
+        "UploadUrl": "https://speedtest-backup1.example.com/upload"
+      },
+      {
+        "DownloadUrl": "https://speedtest-backup2.example.com/10mb.bin",
+        "UploadUrl": "https://speedtest-backup2.example.com/upload"
+      }
+    ],
+
+    // Traffic-based measurement (alternative to endpoint testing)
+    "UseTrafficAnalysis": false,
+    "TrafficAnalysisWindowMinutes": 5,
+
+    // Automatic testing
+    "AutomaticTesting": {
+      "Enabled": false,
+      "IntervalHours": 24,
+      "TestOnStartup": false
+    }
+  },
+
+  "Logging": {
+    "LogLevel": {
+      "Shadowsocks.Services.BandwidthTestService": "Debug"
+    }
+  }
+}
+```
+
+**Environment Variables (Docker/Production):**
+
+```bash
+# .env file
+SPEEDTEST_DOWNLOAD_URL=https://speed.cloudflare.com/__down?bytes={size}
+SPEEDTEST_UPLOAD_URL=https://speed.cloudflare.com/__up
+SPEEDTEST_DURATION=10
+SPEEDTEST_PROVIDER=Cloudflare
+```
+
+---
+
+#### Testing and Validation
+
+**Verify endpoint configuration:**
+
+```bash
+# Test download endpoint
+curl -o /dev/null -w "Time: %{time_total}s\nSpeed: %{speed_download} bytes/s\n" \
+  "https://speed.cloudflare.com/__down?bytes=10485760"
+
+# Test upload endpoint
+dd if=/dev/zero bs=1M count=10 | curl -X POST \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @- \
+  "https://speed.cloudflare.com/__up"
+```
+
+**Monitor endpoint health:**
+
+```csharp
+public class EndpointHealthCheck : IHealthCheck
+{
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var client = new HttpClient();
+            var response = await client.GetAsync(
+                "https://speed.cloudflare.com/__down?bytes=1024", ct);
+
+            if (response.IsSuccessStatusCode)
+                return HealthCheckResult.Healthy("Speedtest endpoint is reachable");
+
+            return HealthCheckResult.Degraded(
+                $"Endpoint returned {response.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy(
+                "Speedtest endpoint is unreachable", ex);
         }
     }
 }
