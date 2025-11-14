@@ -273,7 +273,7 @@ jobs:
 
           if (runTestsOutcome === 'failure') {
             output += `\n**Test Failure Details:**\n`;
-            output += `One or more tests failed. Check the [workflow run logs](${runUrl}#step:${context.job}:${context.action}) for details.\n`;
+            output += `One or more tests failed. Check the [workflow run logs](${runUrl}) for details.\n`;
           }
 
           // Footer
