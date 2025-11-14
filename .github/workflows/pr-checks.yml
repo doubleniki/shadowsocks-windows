@@ -132,8 +132,8 @@ jobs:
 
         $foundIssues = $false
         foreach ($pattern in $patterns) {
-          $matches = Select-String -Path "shadowsocks-csharp/**/*.cs" -Pattern $pattern -CaseSensitive:$false
-          if ($matches) {
+          $matches = @(Select-String -Path "shadowsocks-csharp/**/*.cs" -Pattern $pattern -CaseSensitive:$false)
+          if ($matches.Count -gt 0) {
             Write-Host "⚠️ Potential hardcoded credential found:"
             $matches | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
             $foundIssues = $true
@@ -141,11 +141,14 @@ jobs:
         }
 
         # Check for catch (Exception) without proper handling
-        $broadCatch = Select-String -Path "shadowsocks-csharp/**/*.cs" -Pattern "catch\s*\(Exception[^)]*\)" -CaseSensitive:$false
-        if ($broadCatch) {
+        $broadCatch = @(Select-String -Path "shadowsocks-csharp/**/*.cs" -Pattern "catch\s*\(Exception[^)]*\)" -CaseSensitive:$false)
+        if ($broadCatch.Count -gt 0) {
           Write-Host "⚠️ Found broad exception catching (catch Exception):"
           $broadCatch | Select-Object -First 5 | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
-          Write-Host "  ... and $($broadCatch.Count - 5) more"
+          if ($broadCatch.Count -gt 5) {
+            $remaining = $broadCatch.Count - 5
+            Write-Host "  ... and $remaining more"
+          }
         }
 
         if (!$foundIssues) {
