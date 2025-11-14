@@ -2,6 +2,9 @@
 =======================
 
 [![Build Status]][Appveyor]
+[![Build and Test](https://github.com/shadowsocks/shadowsocks-windows/actions/workflows/build.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-windows/actions/workflows/build.yml)
+[![CodeQL](https://github.com/shadowsocks/shadowsocks-windows/actions/workflows/codeql.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-windows/actions/workflows/codeql.yml)
+[![Release](https://github.com/shadowsocks/shadowsocks-windows/actions/workflows/release.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-windows/actions/workflows/release.yml)
 
 [中文说明]
 

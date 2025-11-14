@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  create-release:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Restore NuGet packages
+      run: nuget restore shadowsocks-windows.sln
+
+    - name: Build x86 Release
+      run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x86 /m /v:minimal
+
+    - name: Build x64 Release
+      run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+
+    - name: Create release packages
+      run: |
+        $version = "${{ github.ref_name }}"
+
+        # Function to calculate hashes
+        function Get-FileHashes($file) {
+          $newLine = "`r`n"
+          $text = (Split-Path $file -Leaf) + $newLine
+          $text += 'MD5' + $newLine
+          $text += (Get-FileHash $file -Algorithm MD5).Hash + $newLine
+          $text += 'SHA-1' + $newLine
+          $text += (Get-FileHash $file -Algorithm SHA1).Hash + $newLine
+          $text += 'SHA-256' + $newLine
+          $text += (Get-FileHash $file -Algorithm SHA256).Hash + $newLine
+          $text += 'SHA-512' + $newLine
+          $text += (Get-FileHash $file -Algorithm SHA512).Hash
+          return $text
+        }
+
+        # Process x86 build
+        $x86Folder = "shadowsocks-csharp\bin\x86\Release"
+        $x86Exe = "$x86Folder\Shadowsocks.exe"
+        $x86ExeHash = "$x86Exe.hash"
+        $x86Zip = "Shadowsocks-$version-x86.zip"
+        $x86ZipHash = "$x86Zip.hash"
+
+        Get-FileHashes -file $x86Exe | Out-File -FilePath $x86ExeHash -Encoding UTF8
+
+        $x86Items = @($x86Exe, $x86ExeHash)
+        Get-ChildItem -Path $x86Folder -Directory | ForEach-Object { $x86Items += $_.FullName }
+        Compress-Archive -Path $x86Items -DestinationPath $x86Zip -Force
+
+        Get-FileHashes -file $x86Zip | Out-File -FilePath $x86ZipHash -Encoding UTF8
+
+        # Process x64 build
+        $x64Folder = "shadowsocks-csharp\bin\x64\Release"
+        $x64Exe = "$x64Folder\Shadowsocks.exe"
+        $x64ExeHash = "$x64Exe.hash"
+        $x64Zip = "Shadowsocks-$version-x64.zip"
+        $x64ZipHash = "$x64Zip.hash"
+
+        Get-FileHashes -file $x64Exe | Out-File -FilePath $x64ExeHash -Encoding UTF8
+
+        $x64Items = @($x64Exe, $x64ExeHash)
+        Get-ChildItem -Path $x64Folder -Directory | ForEach-Object { $x64Items += $_.FullName }
+        Compress-Archive -Path $x64Items -DestinationPath $x64Zip -Force
+
+        Get-FileHashes -file $x64Zip | Out-File -FilePath $x64ZipHash -Encoding UTF8
+
+        Write-Host "Release packages created successfully"
+      shell: pwsh
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        $version = "${{ github.ref_name }}"
+
+        # Get commits since last tag
+        $lastTag = git describe --tags --abbrev=0 HEAD^ 2>$null
+        if ($LASTEXITCODE -eq 0) {
+          $commits = git log --pretty=format:"- %s (%h)" "$lastTag..HEAD"
+        } else {
+          $commits = git log --pretty=format:"- %s (%h)" -n 20
+        }
+
+        $changelog = @"
+        ## What's Changed
+
+        $commits
+
+        ## Download
+
+        Choose the appropriate version for your system:
+        - **x86** - For 32-bit Windows systems
+        - **x64** - For 64-bit Windows systems (recommended)
+
+        See the hash files (.hash) to verify the integrity of your download.
+        "@
+
+        # Output to file for GitHub Release
+        $changelog | Out-File -FilePath changelog.md -Encoding UTF8
+
+        Write-Host "Changelog generated"
+      shell: pwsh
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        body_path: changelog.md
+        files: |
+          Shadowsocks-${{ github.ref_name }}-x86.zip
+          Shadowsocks-${{ github.ref_name }}-x86.zip.hash
+          Shadowsocks-${{ github.ref_name }}-x64.zip
+          Shadowsocks-${{ github.ref_name }}-x64.zip.hash
+        draft: false
+        prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
