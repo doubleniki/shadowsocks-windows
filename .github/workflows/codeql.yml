@@ -38,7 +38,7 @@ jobs:
   analyze:
     name: Analyze C# Code
     runs-on: windows-2022
-    timeout-minutes: 360
+    timeout-minutes: 90
     permissions:
       actions: read
       contents: read

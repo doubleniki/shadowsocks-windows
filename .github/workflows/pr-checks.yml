@@ -93,30 +93,35 @@ jobs:
       id: validation_todos
       run: |
         Write-Host "Checking for new TODOs in critical security files..."
-        $criticalFiles = @(
-          "shadowsocks-csharp/Encryption/*.cs",
-          "shadowsocks-csharp/Controller/Service/*.cs",
-          "shadowsocks-csharp/Proxy/*.cs"
+        $criticalPaths = @(
+          "shadowsocks-csharp/Encryption",
+          "shadowsocks-csharp/Controller/Service",
+          "shadowsocks-csharp/Proxy"
         )
 
-        $foundTodos = $false
-        foreach ($pattern in $criticalFiles) {
-          $files = Get-ChildItem -Path $pattern -Recurse -File
-          foreach ($file in $files) {
-            $content = Get-Content $file.FullName
-            $lineNum = 0
-            foreach ($line in $content) {
-              $lineNum++
-              if ($line -match "//\s*(TODO|FIXME|HACK|XXX)") {
-                Write-Host "$($file.FullName):$lineNum : $line"
-                $foundTodos = $true
-              }
-            }
-          }
+        # Pattern matches TODO/FIXME/HACK/XXX in:
+        # - Single-line comments: // TODO
+        # - Block comments: /* TODO */
+        # - XML doc comments: /// <summary>TODO</summary>
+        $todoPattern = '(//|/\*|\*|///)\s*(TODO|FIXME|HACK|XXX)'
+
+        $allMatches = @()
+        foreach ($path in $criticalPaths) {
+          $matches = @(Select-String -Path "$path\*.cs" -Pattern $todoPattern -CaseSensitive:$false)
+          $allMatches += $matches
         }
 
-        if ($foundTodos) {
-          Write-Host "⚠️ Found TODOs in critical files. Please review."
+        if ($allMatches.Count -gt 0) {
+          Write-Host "⚠️ Found $($allMatches.Count) TODOs in critical files:"
+          $allMatches | Select-Object -First 10 | ForEach-Object {
+            Write-Host "  $($_.Path):$($_.LineNumber) : $($_.Line.Trim())"
+          }
+          if ($allMatches.Count -gt 10) {
+            $remaining = $allMatches.Count - 10
+            Write-Host "  ... and $remaining more"
+          }
+          Write-Host ""
+          Write-Host "⚠️ Please review these TODOs in critical files."
         } else {
           Write-Host "✅ No TODOs found in critical files."
         }
