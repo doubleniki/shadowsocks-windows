@@ -1,0 +1,173 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ master, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/WORKFLOWS.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+  pull_request:
+    branches: [ master, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/WORKFLOWS.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+  workflow_dispatch:
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+        platform: [x86]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ${{ github.workspace }}/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/packages.config') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Restore NuGet packages
+      run: nuget restore shadowsocks-windows.sln
+
+    - name: Build solution
+      run: msbuild shadowsocks-windows.sln /p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} /m /v:minimal
+
+    - name: Run tests
+      run: |
+        $testAssembly = "test\bin\${{ matrix.platform }}\${{ matrix.configuration }}\Shadowsocks.Test.dll"
+        if (Test-Path $testAssembly) {
+          # Find vstest.console.exe using vswhere
+          $vstest = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Workload.ManagedDesktop -find "Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe" | Select-Object -First 1
+
+          if ($vstest -and (Test-Path $vstest)) {
+            Write-Host "Running tests with: $vstest"
+            & $vstest $testAssembly /logger:"trx;LogFileName=test-results.trx" /Platform:${{ matrix.platform }}
+          } else {
+            Write-Host "vstest.console.exe not found"
+            exit 1
+          }
+        } else {
+          Write-Host "Test assembly not found at $testAssembly"
+          exit 1
+        }
+      shell: pwsh
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.configuration }}-${{ matrix.platform }}
+        path: '**/*.trx'
+        retention-days: 30
+
+    - name: Calculate file hashes
+      if: matrix.configuration == 'Release'
+      run: |
+        $WorkingFolder = "$env:GITHUB_WORKSPACE\shadowsocks-csharp\bin\${{ matrix.platform }}\${{ matrix.configuration }}"
+        $ReleaseFile = "$WorkingFolder\Shadowsocks.exe"
+        $HashFile = "$ReleaseFile.hash"
+
+        if (Test-Path $ReleaseFile) {
+          $newLine = "`r`n"
+          $text = (Split-Path $ReleaseFile -Leaf) + $newLine
+          $text += 'MD5' + $newLine
+          $text += (Get-FileHash $ReleaseFile -Algorithm MD5).Hash + $newLine
+          $text += 'SHA-1' + $newLine
+          $text += (Get-FileHash $ReleaseFile -Algorithm SHA1).Hash + $newLine
+          $text += 'SHA-256' + $newLine
+          $text += (Get-FileHash $ReleaseFile -Algorithm SHA256).Hash + $newLine
+          $text += 'SHA-512' + $newLine
+          $text += (Get-FileHash $ReleaseFile -Algorithm SHA512).Hash
+
+          $text | Out-File -FilePath $HashFile -Encoding UTF8
+          Write-Host "Hash file created at $HashFile"
+        } else {
+          Write-Host "Release file not found at $ReleaseFile"
+          exit 1
+        }
+      shell: pwsh
+
+    - name: Create ZIP archive
+      if: matrix.configuration == 'Release'
+      run: |
+        $WorkingFolder = "$env:GITHUB_WORKSPACE\shadowsocks-csharp\bin\${{ matrix.platform }}\${{ matrix.configuration }}"
+        $ReleaseFile = "$WorkingFolder\Shadowsocks.exe"
+        $HashFile = "$ReleaseFile.hash"
+        $LocalizationFiles = Get-ChildItem -Path $WorkingFolder -Directory
+        $ZipFile = "$WorkingFolder\Shadowsocks-${{ matrix.platform }}.zip"
+
+        # Create array of items to compress
+        $items = @($ReleaseFile, $HashFile)
+        $LocalizationFiles | ForEach-Object { $items += $_.FullName }
+
+        # Compress using native Windows
+        Compress-Archive -Path $items -DestinationPath $ZipFile -Force
+
+        Write-Host "ZIP archive created at $ZipFile"
+      shell: pwsh
+
+    - name: Calculate ZIP hash
+      if: matrix.configuration == 'Release'
+      run: |
+        $WorkingFolder = "$env:GITHUB_WORKSPACE\shadowsocks-csharp\bin\${{ matrix.platform }}\${{ matrix.configuration }}"
+        $ZipFile = "$WorkingFolder\Shadowsocks-${{ matrix.platform }}.zip"
+        $ZipHashFile = "$ZipFile.hash"
+
+        $newLine = "`r`n"
+        $text = (Split-Path $ZipFile -Leaf) + $newLine
+        $text += 'MD5' + $newLine
+        $text += (Get-FileHash $ZipFile -Algorithm MD5).Hash + $newLine
+        $text += 'SHA-1' + $newLine
+        $text += (Get-FileHash $ZipFile -Algorithm SHA1).Hash + $newLine
+        $text += 'SHA-256' + $newLine
+        $text += (Get-FileHash $ZipFile -Algorithm SHA256).Hash + $newLine
+        $text += 'SHA-512' + $newLine
+        $text += (Get-FileHash $ZipFile -Algorithm SHA512).Hash
+
+        $text | Out-File -FilePath $ZipHashFile -Encoding UTF8
+        Write-Host "ZIP hash file created at $ZipHashFile"
+      shell: pwsh
+
+    - name: Upload artifacts
+      if: matrix.configuration == 'Release'
+      uses: actions/upload-artifact@v4
+      with:
+        name: Shadowsocks-${{ matrix.platform }}
+        path: |
+          shadowsocks-csharp/bin/${{ matrix.platform }}/Release/Shadowsocks-${{ matrix.platform }}.zip
+          shadowsocks-csharp/bin/${{ matrix.platform }}/Release/Shadowsocks-${{ matrix.platform }}.zip.hash
+        retention-days: 90

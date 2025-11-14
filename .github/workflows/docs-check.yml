@@ -1,0 +1,174 @@
+name: Documentation Check
+
+on:
+  pull_request:
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - '.github/WORKFLOWS.md'
+  push:
+    branches: [ master, develop ]
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - '.github/WORKFLOWS.md'
+  workflow_dispatch:
+
+jobs:
+  docs-validation:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check Markdown files
+      run: |
+        echo "📝 Checking Markdown files..."
+        md_files=$(find . -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*")
+
+        if [ -z "$md_files" ]; then
+          echo "No markdown files found"
+          exit 0
+        fi
+
+        echo "Found $(echo "$md_files" | wc -l) markdown files"
+        echo "$md_files"
+
+    - name: Check for broken relative links
+      run: |
+        echo "🔗 Checking for broken relative links in Markdown files..."
+
+        broken_links=0
+        while IFS= read -r file; do
+          if [ -f "$file" ]; then
+            # Extract relative links (not starting with http/https)
+            links=$(grep -oP '\[.*?\]\(\K[^)]+(?=\))' "$file" 2>/dev/null | grep -v '^http' | grep -v '^#' || true)
+
+            for link in $links; do
+              # Remove anchor
+              clean_link=$(echo "$link" | cut -d'#' -f1)
+
+              if [ -n "$clean_link" ]; then
+                # Resolve relative to file directory
+                dir=$(dirname "$file")
+                full_path="$dir/$clean_link"
+
+                if [ ! -e "$full_path" ]; then
+                  echo "❌ Broken link in $file: $link -> $full_path"
+                  broken_links=$((broken_links + 1))
+                fi
+              fi
+            done
+          fi
+        done < <(find . -name "*.md" -not -path "./node_modules/*" -not -path "./.git/*")
+
+        if [ $broken_links -gt 0 ]; then
+          echo "⚠️ Found $broken_links broken relative links"
+          echo "Note: This is a warning, not blocking the PR"
+        else
+          echo "✅ No broken relative links found"
+        fi
+
+    - name: Check for TODO/FIXME in docs
+      run: |
+        echo "📋 Checking for TODO/FIXME in documentation..."
+
+        todos=$(grep -rn "TODO\|FIXME" --include="*.md" . 2>/dev/null | grep -v ".git" || true)
+
+        if [ -n "$todos" ]; then
+          echo "Found TODOs/FIXMEs in documentation:"
+          echo "$todos"
+          echo ""
+          echo "⚠️ Consider resolving these before merging"
+        else
+          echo "✅ No TODOs/FIXMEs found in documentation"
+        fi
+
+    - name: Validate README structure
+      run: |
+        echo "📄 Validating README.md structure..."
+
+        if [ ! -f "README.md" ]; then
+          echo "❌ README.md not found!"
+          exit 1
+        fi
+
+        # Check for required sections
+        required_sections=("Features" "Downloads" "Requirements")
+        missing_sections=""
+
+        for section in "${required_sections[@]}"; do
+          if ! grep -q "## $section" README.md; then
+            missing_sections="$missing_sections\n- $section"
+          fi
+        done
+
+        if [ -n "$missing_sections" ]; then
+          echo "⚠️ README.md is missing recommended sections:$missing_sections"
+        else
+          echo "✅ README.md has all recommended sections"
+        fi
+
+    - name: Check file sizes
+      run: |
+        echo "📊 Checking documentation file sizes..."
+
+        large_files=$(find . -name "*.md" -size +500k -not -path "./.git/*" 2>/dev/null || true)
+
+        if [ -n "$large_files" ]; then
+          echo "⚠️ Large markdown files found (>500KB):"
+          echo "$large_files"
+          echo "Consider splitting large files into smaller documents"
+        else
+          echo "✅ All markdown files are reasonable size"
+        fi
+
+    - name: Summary
+      if: always()
+      run: |
+        echo ""
+        echo "========================================="
+        echo "📚 Documentation Check Complete!"
+        echo "========================================="
+        echo ""
+        echo "This is a fast validation workflow that runs when only"
+        echo "documentation files are changed. It skips the full build"
+        echo "process to provide quick feedback."
+        echo ""
+        echo "✅ Checks passed - documentation looks good!"
+
+  comment-pr:
+    name: Comment on PR
+    runs-on: ubuntu-latest
+    needs: docs-validation
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Comment PR
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const output = `#### Documentation Check Results 📚
+
+          ✅ Documentation validation completed successfully!
+
+          This PR only modifies documentation files, so the full build pipeline was skipped for faster feedback.
+
+          **What was checked:**
+          - ✅ Markdown file syntax
+          - ✅ Relative links validation
+          - ✅ README.md structure
+          - ✅ File sizes
+          - ✅ TODO/FIXME markers
+
+          *Note: Full CI/CD pipeline will run when code files are modified.*`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          });

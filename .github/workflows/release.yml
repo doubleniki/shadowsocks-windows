@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  create-release:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Restore NuGet packages
+      run: nuget restore shadowsocks-windows.sln
+
+    - name: Build Release
+      run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x86 /m /v:minimal
+
+    - name: Create release packages
+      run: |
+        $version = "${{ github.ref_name }}"
+
+        # Function to calculate hashes
+        function Get-FileHashes($file) {
+          $newLine = "`r`n"
+          $text = (Split-Path $file -Leaf) + $newLine
+          $text += 'MD5' + $newLine
+          $text += (Get-FileHash $file -Algorithm MD5).Hash + $newLine
+          $text += 'SHA-1' + $newLine
+          $text += (Get-FileHash $file -Algorithm SHA1).Hash + $newLine
+          $text += 'SHA-256' + $newLine
+          $text += (Get-FileHash $file -Algorithm SHA256).Hash + $newLine
+          $text += 'SHA-512' + $newLine
+          $text += (Get-FileHash $file -Algorithm SHA512).Hash
+          return $text
+        }
+
+        # Process x86 build
+        $buildFolder = "shadowsocks-csharp\bin\x86\Release"
+        $exe = "$buildFolder\Shadowsocks.exe"
+        $exeHash = "$exe.hash"
+        $zip = "Shadowsocks-$version.zip"
+        $zipHash = "$zip.hash"
+
+        Get-FileHashes -file $exe | Out-File -FilePath $exeHash -Encoding UTF8
+
+        $items = @($exe, $exeHash)
+        Get-ChildItem -Path $buildFolder -Directory | ForEach-Object { $items += $_.FullName }
+        Compress-Archive -Path $items -DestinationPath $zip -Force
+
+        Get-FileHashes -file $zip | Out-File -FilePath $zipHash -Encoding UTF8
+
+        Write-Host "Release package created successfully"
+      shell: pwsh
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        $version = "${{ github.ref_name }}"
+
+        # Get commits since last tag
+        $lastTag = git describe --tags --abbrev=0 HEAD^ 2>$null
+        if ($LASTEXITCODE -eq 0) {
+          $commits = git log --pretty=format:"- %s (%h)" "$lastTag..HEAD"
+        } else {
+          $commits = git log --pretty=format:"- %s (%h)" -n 20
+        }
+
+        $changelog = @"
+        ## What's Changed
+
+        $commits
+
+        ## Download
+
+        This release includes a 32-bit (x86) build compatible with all Windows systems.
+
+        See the hash file (.hash) to verify the integrity of your download.
+        "@
+
+        # Output to file for GitHub Release
+        $changelog | Out-File -FilePath changelog.md -Encoding UTF8
+
+        Write-Host "Changelog generated"
+      shell: pwsh
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        body_path: changelog.md
+        files: |
+          Shadowsocks-${{ github.ref_name }}.zip
+          Shadowsocks-${{ github.ref_name }}.zip.hash
+        draft: false
+        prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

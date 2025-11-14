@@ -1,0 +1,307 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  # Detect what changed to optimize CI runs
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      docs: ${{ steps.filter.outputs.docs }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'shadowsocks-csharp/**/*.cs'
+              - 'test/**/*.cs'
+              - '**/*.csproj'
+              - '**/packages.config'
+              - 'shadowsocks-csharp/**/*.xaml'
+              - 'shadowsocks-csharp/**/*.resx'
+            docs:
+              - '**.md'
+              - 'docs/**'
+              - '.github/ISSUE_TEMPLATE/**'
+              - '.github/PULL_REQUEST_TEMPLATE.md'
+              - '.github/WORKFLOWS.md'
+            workflows:
+              - '.github/workflows/**'
+              - '.github/dependabot.yml'
+  quick-build:
+    name: Quick Build Check
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true' || needs.detect-changes.outputs.workflows == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Cache NuGet packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.nuget/packages
+          ${{ github.workspace }}/packages
+        key: ${{ runner.os }}-nuget-${{ hashFiles('**/packages.config') }}
+        restore-keys: |
+          ${{ runner.os }}-nuget-
+
+    - name: Restore NuGet packages
+      run: nuget restore shadowsocks-windows.sln
+
+    - name: Build Debug x86
+      id: build_debug
+      run: msbuild shadowsocks-windows.sln /p:Configuration=Debug /p:Platform=x86 /m /v:minimal
+
+    - name: Build Release x86
+      id: build_release
+      run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x86 /m /v:minimal
+
+  validation:
+    name: Code Validation
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for TODOs in critical files
+      id: validation_todos
+      run: |
+        Write-Host "Checking for new TODOs in critical security files..."
+        $criticalPaths = @(
+          "shadowsocks-csharp/Encryption",
+          "shadowsocks-csharp/Controller/Service",
+          "shadowsocks-csharp/Proxy"
+        )
+
+        # Pattern matches TODO/FIXME/HACK/XXX in:
+        # - Single-line comments: // TODO
+        # - Block comments: /* TODO */
+        # - XML doc comments: /// <summary>TODO</summary>
+        $todoPattern = '(//|/\*|\*|///)\s*(TODO|FIXME|HACK|XXX)'
+
+        $allMatches = @()
+        foreach ($path in $criticalPaths) {
+          $files = Get-ChildItem -Path "$path\*.cs" -Recurse -File -ErrorAction SilentlyContinue
+          if ($files) {
+            $matches = @($files | Select-String -Pattern $todoPattern -CaseSensitive:$false)
+            $allMatches += $matches
+          }
+        }
+
+        if ($allMatches.Count -gt 0) {
+          Write-Host "⚠️ Found $($allMatches.Count) TODOs in critical files:"
+          $allMatches | Select-Object -First 10 | ForEach-Object {
+            Write-Host "  $($_.Path):$($_.LineNumber) : $($_.Line.Trim())"
+          }
+          if ($allMatches.Count -gt 10) {
+            $remaining = $allMatches.Count - 10
+            Write-Host "  ... and $remaining more"
+          }
+          Write-Host ""
+          Write-Host "⚠️ Please review these TODOs in critical files."
+        } else {
+          Write-Host "✅ No TODOs found in critical files."
+        }
+      shell: pwsh
+
+    - name: Check for common security issues
+      id: validation_security
+      run: |
+        Write-Host "Checking for common security anti-patterns..."
+
+        # Check for hardcoded credentials (basic check)
+        $patterns = @(
+          'password\s*=\s*"[^"]+"',
+          'api[_-]?key\s*=\s*"[^"]+"',
+          'secret\s*=\s*"[^"]+"'
+        )
+
+        $csFiles = Get-ChildItem -Path "shadowsocks-csharp" -Filter "*.cs" -Recurse -File -ErrorAction SilentlyContinue
+
+        $foundIssues = $false
+        if ($csFiles) {
+          foreach ($pattern in $patterns) {
+            $matches = @($csFiles | Select-String -Pattern $pattern -CaseSensitive:$false)
+            if ($matches.Count -gt 0) {
+              Write-Host "⚠️ Potential hardcoded credential found:"
+              $matches | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
+              $foundIssues = $true
+            }
+          }
+        }
+
+        # Check for catch (Exception) without proper handling
+        $broadCatch = @()
+        if ($csFiles) {
+          $broadCatch = @($csFiles | Select-String -Pattern "catch\s*\(Exception[^)]*\)" -CaseSensitive:$false)
+        }
+        if ($broadCatch.Count -gt 0) {
+          Write-Host "⚠️ Found broad exception catching (catch Exception):"
+          $broadCatch | Select-Object -First 5 | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
+          if ($broadCatch.Count -gt 5) {
+            $remaining = $broadCatch.Count - 5
+            Write-Host "  ... and $remaining more"
+          }
+        }
+
+        if (!$foundIssues) {
+          Write-Host "✅ No obvious security issues found."
+        }
+      shell: pwsh
+
+  test-summary:
+    name: Test Summary
+    needs: [detect-changes, quick-build]
+    if: needs.detect-changes.outputs.code == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Restore and Build
+      id: restore_build
+      run: |
+        nuget restore shadowsocks-windows.sln
+        msbuild shadowsocks-windows.sln /p:Configuration=Debug /p:Platform=x86 /m /v:minimal
+
+    - name: Run unit tests
+      id: run_tests
+      run: |
+        $testAssembly = "test\bin\x86\Debug\Shadowsocks.Test.dll"
+        if (Test-Path $testAssembly) {
+          # Find vstest.console.exe using vswhere
+          $vstest = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Workload.ManagedDesktop -find "Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe" | Select-Object -First 1
+
+          if ($vstest -and (Test-Path $vstest)) {
+            Write-Host "Running tests with: $vstest"
+            & $vstest $testAssembly /logger:"console;verbosity=normal"
+          } else {
+            Write-Host "vstest.console.exe not found"
+            exit 1
+          }
+        } else {
+          Write-Host "⚠️ Test assembly not found at $testAssembly"
+          exit 1
+        }
+      shell: pwsh
+
+    - name: Comment PR with results
+      if: always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          // Get job and step outcomes
+          const jobs = context.payload.workflow_run ?
+            await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId
+            }) : null;
+
+          // Helper function to map outcome to emoji and status
+          function getStatusEmoji(outcome) {
+            if (!outcome || outcome === 'skipped') return '⏭️';
+            if (outcome === 'success') return '✅';
+            if (outcome === 'failure') return '❌';
+            if (outcome === 'cancelled') return '🚫';
+            return '⚠️';
+          }
+
+          // Get outcomes from job context (since we're in test-summary job)
+          // We need to check if other jobs ran and their outcomes
+          const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+          // Build status message
+          let buildStatus = '⏭️ Skipped (no code changes)';
+          let validationStatus = '⏭️ Skipped (no code changes)';
+          let testStatus = '⏭️ Skipped (no code changes)';
+
+          // Check if this job is running (which means code changed)
+          if (context.job) {
+            // We're in test-summary, so code changed
+            const restoreBuildOutcome = '${{ steps.restore_build.outcome }}';
+            const runTestsOutcome = '${{ steps.run_tests.outcome }}';
+
+            // Get build status from quick-build job (via needs context)
+            buildStatus = '${{ needs.quick-build.result }}' === 'success' ?
+              '✅ Build completed successfully (Debug & Release x86)' :
+              '${{ needs.quick-build.result }}' === 'failure' ?
+              '❌ Build failed' :
+              '⏭️ Build skipped';
+
+            // Test status
+            testStatus = runTestsOutcome === 'success' ?
+              '✅ Tests passed' :
+              runTestsOutcome === 'failure' ?
+              '❌ Tests failed' :
+              `${getStatusEmoji(runTestsOutcome)} Tests ${runTestsOutcome}`;
+
+            // Validation status (if it ran)
+            // Note: validation runs separately, we can't easily get its status here
+            validationStatus = '🔍 Code validation running separately';
+          }
+
+          let output = `#### PR Checks Results 🎯\n\n`;
+          output += `${buildStatus}\n`;
+          output += `${testStatus}\n`;
+          output += `${validationStatus}\n`;
+          output += `\n---\n`;
+
+          // Add failure details if any
+          const restoreBuildOutcome = '${{ steps.restore_build.outcome }}';
+          const runTestsOutcome = '${{ steps.run_tests.outcome }}';
+
+          if (restoreBuildOutcome === 'failure') {
+            output += `\n**Build Error Details:**\n`;
+            output += `The build step failed. Check the [workflow run logs](${runUrl}) for details.\n`;
+          }
+
+          if (runTestsOutcome === 'failure') {
+            output += `\n**Test Failure Details:**\n`;
+            output += `One or more tests failed. Check the [workflow run logs](${runUrl}) for details.\n`;
+          }
+
+          // Footer
+          output += `\n*Full CI/CD pipeline will run on merge to master.*\n`;
+          output += `\n[View full workflow run](${runUrl})`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          });
