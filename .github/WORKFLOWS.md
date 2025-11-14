@@ -6,6 +6,53 @@ This document describes the CI/CD workflows configured for the Shadowsocks-Windo
 
 The project uses GitHub Actions for continuous integration, testing, security analysis, and automated releases. This replaces and extends the previous AppVeyor-based CI system.
 
+## Smart CI Optimization
+
+The workflows are optimized to **skip unnecessary builds** when changes don't affect the code:
+
+### Path Filtering
+
+Workflows automatically skip when only these files change:
+- `**.md` - All Markdown files
+- `docs/**` - Documentation directory
+- `.github/ISSUE_TEMPLATE/**` - Issue templates
+- `.github/PULL_REQUEST_TEMPLATE.md` - PR template
+- `.github/WORKFLOWS.md` - This document
+- `LICENSE`, `.gitignore`, `.editorconfig` - Configuration files
+- `appveyor.yml*` - Legacy CI files
+- `packaging/**` - Packaging scripts
+
+**Benefits:**
+- ⚡ Faster feedback for documentation changes
+- 💰 Reduced CI minutes usage
+- 🎯 Focus on code-related changes
+
+### Conditional Jobs in PR Checks
+
+The `pr-checks.yml` workflow uses intelligent change detection:
+
+1. **detect-changes** - Analyzes what files changed
+2. **Conditional execution**:
+   - Full build only runs if code files changed
+   - Tests only run if code changed
+   - Validation checks only run if code changed
+
+**Example:**
+- Documentation-only PR: ~30 seconds (docs validation only)
+- Code PR: ~10 minutes (full build + tests)
+- Mixed PR: Full validation for safety
+
+### Documentation-Only Workflow
+
+When only docs change, a lightweight `docs-check.yml` runs instead:
+- ✅ Markdown syntax validation
+- ✅ Broken link detection
+- ✅ README structure check
+- ✅ File size warnings
+- ✅ TODO/FIXME detection
+
+**Runtime:** < 1 minute
+
 ## Workflows
 
 ### 1. Build and Test (`build.yml`)
@@ -93,6 +140,36 @@ The project uses GitHub Actions for continuous integration, testing, security an
 - Fast feedback for contributors
 - Prevents common issues before merge
 - Automated code review assistance
+
+**Optimization:**
+- Uses `detect-changes` job to analyze what files changed
+- Skips build/test jobs if only documentation changed
+- Runs in ~30 seconds for docs-only changes vs ~10 minutes for code changes
+
+### 5. Documentation Check (`docs-check.yml`)
+
+**Triggers:**
+- Pull requests or pushes that modify markdown files
+- Changes to `**.md`, `docs/**`, or `.github/WORKFLOWS.md`
+- Manual dispatch
+
+**What it does:**
+- Validates Markdown syntax
+- Checks for broken relative links
+- Verifies README.md structure
+- Warns about large files (>500KB)
+- Detects TODO/FIXME markers in docs
+- Posts summary comment on PR
+
+**Benefits:**
+- ⚡ Ultra-fast validation (~30 seconds)
+- 🔗 Prevents broken documentation links
+- 📝 Ensures documentation quality
+- 💾 Saves CI minutes by not building code
+
+**When it runs:**
+- Automatically when only documentation files are modified
+- Provides quick feedback without waiting for full build
 
 ## Dependabot Configuration
 

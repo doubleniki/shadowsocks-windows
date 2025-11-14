@@ -3,8 +3,32 @@ name: "CodeQL Security Analysis"
 on:
   push:
     branches: [ master, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/WORKFLOWS.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+      - 'appveyor.yml'
+      - 'appveyor.yml.*'
+      - 'packaging/**'
   pull_request:
     branches: [ master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/WORKFLOWS.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+      - 'appveyor.yml'
+      - 'appveyor.yml.*'
+      - 'packaging/**'
   schedule:
     # Run at 00:00 UTC every Monday
     - cron: '0 0 * * 1'

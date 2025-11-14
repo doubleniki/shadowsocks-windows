@@ -9,8 +9,39 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
+  # Detect what changed to optimize CI runs
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      docs: ${{ steps.filter.outputs.docs }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'shadowsocks-csharp/**/*.cs'
+              - 'test/**/*.cs'
+              - '**/*.csproj'
+              - '**/packages.config'
+              - 'shadowsocks-csharp/**/*.xaml'
+              - 'shadowsocks-csharp/**/*.resx'
+            docs:
+              - '**.md'
+              - 'docs/**'
+              - '.github/ISSUE_TEMPLATE/**'
+              - '.github/PULL_REQUEST_TEMPLATE.md'
+              - '.github/WORKFLOWS.md'
+            workflows:
+              - '.github/workflows/**'
+              - '.github/dependabot.yml'
   quick-build:
     name: Quick Build Check
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true' || needs.detect-changes.outputs.workflows == 'true'
     runs-on: windows-2022
     timeout-minutes: 30
 
@@ -47,6 +78,8 @@ jobs:
 
   validation:
     name: Code Validation
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
     runs-on: windows-2022
     timeout-minutes: 15
 
@@ -122,8 +155,9 @@ jobs:
 
   test-summary:
     name: Test Summary
+    needs: [detect-changes, quick-build]
+    if: needs.detect-changes.outputs.code == 'true'
     runs-on: windows-2022
-    needs: quick-build
     timeout-minutes: 20
 
     steps:
