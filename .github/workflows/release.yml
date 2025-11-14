@@ -31,8 +31,11 @@ jobs:
     - name: Restore NuGet packages
       run: nuget restore shadowsocks-windows.sln
 
-    - name: Build Release
+    - name: Build Release x86
       run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x86 /m /v:minimal
+
+    - name: Build Release x64
+      run: msbuild shadowsocks-windows.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 
     - name: Create release packages
       run: |
@@ -53,22 +56,28 @@ jobs:
           return $text
         }
 
-        # Process x86 build
-        $buildFolder = "shadowsocks-csharp\bin\x86\Release"
-        $exe = "$buildFolder\Shadowsocks.exe"
-        $exeHash = "$exe.hash"
-        $zip = "Shadowsocks-$version.zip"
-        $zipHash = "$zip.hash"
+        # Function to create release package for a platform
+        function Create-ReleasePackage($platform) {
+          $buildFolder = "shadowsocks-csharp\bin\$platform\Release"
+          $exe = "$buildFolder\Shadowsocks.exe"
+          $exeHash = "$exe.hash"
+          $zip = "Shadowsocks-$version-$platform.zip"
+          $zipHash = "$zip.hash"
 
-        Get-FileHashes -file $exe | Out-File -FilePath $exeHash -Encoding UTF8
+          Get-FileHashes -file $exe | Out-File -FilePath $exeHash -Encoding UTF8
 
-        $items = @($exe, $exeHash)
-        Get-ChildItem -Path $buildFolder -Directory | ForEach-Object { $items += $_.FullName }
-        Compress-Archive -Path $items -DestinationPath $zip -Force
+          $items = @($exe, $exeHash)
+          Get-ChildItem -Path $buildFolder -Directory | ForEach-Object { $items += $_.FullName }
+          Compress-Archive -Path $items -DestinationPath $zip -Force
 
-        Get-FileHashes -file $zip | Out-File -FilePath $zipHash -Encoding UTF8
+          Get-FileHashes -file $zip | Out-File -FilePath $zipHash -Encoding UTF8
 
-        Write-Host "Release package created successfully"
+          Write-Host "Release package for $platform created successfully"
+        }
+
+        # Create packages for both platforms
+        Create-ReleasePackage -platform "x86"
+        Create-ReleasePackage -platform "x64"
       shell: pwsh
 
     - name: Generate changelog
@@ -91,7 +100,9 @@ jobs:
 
         ## Download
 
-        This release includes a 32-bit (x86) build compatible with all Windows systems.
+        This release includes both 32-bit (x86) and 64-bit (x64) builds:
+        - **x86**: Compatible with all Windows systems (32-bit and 64-bit)
+        - **x64**: Optimized for 64-bit Windows systems
 
         See the hash file (.hash) to verify the integrity of your download.
         "@
@@ -107,8 +118,10 @@ jobs:
       with:
         body_path: changelog.md
         files: |
-          Shadowsocks-${{ github.ref_name }}.zip
-          Shadowsocks-${{ github.ref_name }}.zip.hash
+          Shadowsocks-${{ github.ref_name }}-x86.zip
+          Shadowsocks-${{ github.ref_name }}-x86.zip.hash
+          Shadowsocks-${{ github.ref_name }}-x64.zip
+          Shadowsocks-${{ github.ref_name }}-x64.zip.hash
         draft: false
         prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
         generate_release_notes: true
