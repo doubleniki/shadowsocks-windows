@@ -257,6 +257,49 @@ namespace Shadowsocks.Models.SpeedTest
 
 ### 3.3 Services
 
+#### IServerService.cs
+
+```csharp
+namespace Shadowsocks.Services
+{
+    /// <summary>
+    /// Service for managing shadowsocks servers
+    /// </summary>
+    public interface IServerService
+    {
+        /// <summary>
+        /// Get all configured servers
+        /// </summary>
+        Task<List<Server>> GetAllServersAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Get server by ID
+        /// </summary>
+        Task<Server> GetServerByIdAsync(Guid serverId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Add a new server
+        /// </summary>
+        Task<Server> AddServerAsync(Server server, CancellationToken ct = default);
+
+        /// <summary>
+        /// Update existing server
+        /// </summary>
+        Task UpdateServerAsync(Server server, CancellationToken ct = default);
+
+        /// <summary>
+        /// Delete a server
+        /// </summary>
+        Task DeleteServerAsync(Guid serverId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Observable for server changes
+        /// </summary>
+        IObservable<List<Server>> ServersChanged { get; }
+    }
+}
+```
+
 #### ISpeedTestService.cs
 
 ```csharp
@@ -610,6 +653,7 @@ namespace Shadowsocks.Services
     {
         private readonly IPingService _pingService;
         private readonly IBandwidthTestService _bandwidthService;
+        private readonly IServerService _serverService;
         private readonly ILogger<SpeedTestService> _logger;
         private readonly Subject<SpeedTestResult> _testResults;
 
@@ -618,10 +662,12 @@ namespace Shadowsocks.Services
         public SpeedTestService(
             IPingService pingService,
             IBandwidthTestService bandwidthService,
+            IServerService serverService,
             ILogger<SpeedTestService> logger)
         {
             _pingService = pingService;
             _bandwidthService = bandwidthService;
+            _serverService = serverService;
             _logger = logger;
             _testResults = new Subject<SpeedTestResult>();
         }
