@@ -25,7 +25,7 @@
 
 ### 3.1 Компоненты
 
-```
+```text
 Models/
 ├── SpeedTest/
 │   ├── PingResult.cs
@@ -921,7 +921,7 @@ The bandwidth testing service requires reliable endpoints for measuring download
 
 #### Option A: Public Speedtest Endpoints (Recommended for Quick Start)
 
-**1. Cloudflare Speed Test (Recommended - Production Ready)**
+##### 1. Cloudflare Speed Test (Recommended - Production Ready)
 
 Cloudflare provides free, globally distributed speedtest endpoints:
 
@@ -951,7 +951,7 @@ Cloudflare provides free, globally distributed speedtest endpoints:
 // Upload: POST https://speed.cloudflare.com/__up
 ```
 
-**2. Fast.com API (Netflix CDN)**
+##### 2. Fast.com API (Netflix CDN)
 
 Fast.com provides a JSON API for speed testing:
 
@@ -971,7 +971,7 @@ Fast.com provides a JSON API for speed testing:
 - ⚠️ Requires API integration
 - ⚠️ Rate limiting may apply
 
-**3. LibreSpeed (Open Source)**
+##### 3. LibreSpeed (Open Source)
 
 ```json
 {
@@ -986,7 +986,7 @@ Fast.com provides a JSON API for speed testing:
 }
 ```
 
-Public LibreSpeed instances: https://github.com/librespeed/speedtest/wiki/Public-Servers
+Public LibreSpeed instances: [https://github.com/librespeed/speedtest/wiki/Public-Servers](https://github.com/librespeed/speedtest/wiki/Public-Servers)
 
 ---
 
@@ -994,9 +994,9 @@ Public LibreSpeed instances: https://github.com/librespeed/speedtest/wiki/Public
 
 For organizations requiring full control, deploy a dedicated speedtest server.
 
-**Deployment Guide:**
+##### Deployment Guide
 
-**1. Using LibreSpeed (Docker)**
+##### 1. Using LibreSpeed (Docker)
 
 Create `docker-compose.yml`:
 ```yaml
@@ -1031,7 +1031,7 @@ Configure in Shadowsocks:
 }
 ```
 
-**2. Using Nginx + Static Files**
+##### 2. Using Nginx + Static Files
 
 For simple download testing, serve static files via Nginx:
 
@@ -1084,7 +1084,7 @@ Configuration:
 }
 ```
 
-**3. CDN-Hosted Test Files**
+##### 3. CDN-Hosted Test Files
 
 Upload test files to your CDN (Cloudflare, AWS CloudFront, Azure CDN):
 
@@ -1109,7 +1109,7 @@ CloudFront configuration:
 }
 ```
 
-**Monitoring:**
+##### Monitoring
 
 Add monitoring to track endpoint health:
 ```bash
@@ -1117,7 +1117,8 @@ Add monitoring to track endpoint health:
 curl https://speedtest.your-domain.com/metrics
 ```
 
-**Security Considerations:**
+##### Security Considerations
+
 - Enable HTTPS with valid SSL certificate
 - Implement rate limiting (e.g., 10 tests per IP per hour)
 - Set up monitoring and alerts
@@ -1127,7 +1128,7 @@ curl https://speedtest.your-domain.com/metrics
 
 #### Option C: Alternative Measurement Methods
 
-**1. Real Traffic Analysis (No External Endpoint Required)**
+##### 1. Real Traffic Analysis (No External Endpoint Required)
 
 Measure bandwidth by analyzing actual proxy traffic:
 
@@ -1165,7 +1166,7 @@ public class TrafficAnalyzer : ITrafficAnalyzer
 }
 ```
 
-**2. Integrated Public APIs**
+##### 2. Integrated Public APIs
 
 Use existing speedtest APIs:
 
