@@ -223,18 +223,36 @@ namespace Shadowsocks.Models.SpeedTest
         public List<SpeedTestResult> RecentResults { get; set; } = new();
 
         /// <summary>
-        /// Average latency over recent results
+        /// Average latency over recent results (returns NaN if no successful results)
         /// </summary>
-        public double AverageLatency =>
-            RecentResults.Where(r => r.Status == SpeedTestStatus.Success)
-                        .Average(r => r.Ping?.AverageLatency ?? double.MaxValue);
+        public double AverageLatency
+        {
+            get
+            {
+                var successful = RecentResults
+                    .Where(r => r.Status == SpeedTestStatus.Success && r.Ping != null)
+                    .Select(r => r.Ping.AverageLatency)
+                    .ToList();
+
+                return successful.Any() ? successful.Average() : double.NaN;
+            }
+        }
 
         /// <summary>
-        /// Average download speed
+        /// Average download speed (returns NaN if no successful results)
         /// </summary>
-        public double AverageDownloadSpeed =>
-            RecentResults.Where(r => r.Status == SpeedTestStatus.Success)
-                        .Average(r => r.DownloadSpeed);
+        public double AverageDownloadSpeed
+        {
+            get
+            {
+                var successful = RecentResults
+                    .Where(r => r.Status == SpeedTestStatus.Success)
+                    .Select(r => r.DownloadSpeed)
+                    .ToList();
+
+                return successful.Any() ? successful.Average() : double.NaN;
+            }
+        }
 
         /// <summary>
         /// Latest result
