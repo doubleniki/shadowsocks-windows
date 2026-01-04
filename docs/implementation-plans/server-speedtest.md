@@ -377,6 +377,70 @@ namespace Shadowsocks.Services
 }
 ```
 
+#### IPingService.cs
+
+```csharp
+namespace Shadowsocks.Services
+{
+    /// <summary>
+    /// Service for pinging servers and measuring latency
+    /// </summary>
+    public interface IPingService
+    {
+        /// <summary>
+        /// Ping a server multiple times and return aggregated results
+        /// </summary>
+        /// <param name="host">Server hostname or IP address</param>
+        /// <param name="port">Server port</param>
+        /// <param name="count">Number of ping attempts</param>
+        /// <param name="ct">Cancellation token</param>
+        /// <returns>Aggregated ping results including average latency and packet loss</returns>
+        Task<PingResult> PingAsync(
+            string host,
+            int port,
+            int count = 4,
+            CancellationToken ct = default);
+    }
+}
+```
+
+#### IBandwidthTestService.cs
+
+```csharp
+namespace Shadowsocks.Services
+{
+    /// <summary>
+    /// Service for measuring download and upload bandwidth
+    /// </summary>
+    public interface IBandwidthTestService
+    {
+        /// <summary>
+        /// Measure download speed through a proxy server
+        /// </summary>
+        /// <param name="server">Server to test</param>
+        /// <param name="progress">Progress reporter for real-time speed updates</param>
+        /// <param name="ct">Cancellation token</param>
+        /// <returns>Download speed in Mbps</returns>
+        Task<double> MeasureDownloadSpeedAsync(
+            Server server,
+            IProgress<double> progress = null,
+            CancellationToken ct = default);
+
+        /// <summary>
+        /// Measure upload speed through a proxy server
+        /// </summary>
+        /// <param name="server">Server to test</param>
+        /// <param name="progress">Progress reporter for real-time speed updates</param>
+        /// <param name="ct">Cancellation token</param>
+        /// <returns>Upload speed in Mbps</returns>
+        Task<double> MeasureUploadSpeedAsync(
+            Server server,
+            IProgress<double> progress = null,
+            CancellationToken ct = default);
+    }
+}
+```
+
 #### PingService.cs
 
 ```csharp
@@ -541,14 +605,8 @@ namespace Shadowsocks.Services
         {
             try
             {
-                // Configure HttpClient to use the proxy
-                var handler = new HttpClientHandler
-                {
-                    Proxy = new WebProxy($"127.0.0.1:{server.LocalPort}"),
-                    UseProxy = true
-                };
-
-                using var client = new HttpClient(handler);
+                // Use pre-configured HttpClient from factory with proxy settings
+                // Note: Proxy configuration should be set up during service registration
                 var sw = Stopwatch.StartNew();
                 long totalBytes = 0;
 
@@ -556,7 +614,7 @@ namespace Shadowsocks.Services
                 var testUrl = GetTestUrl(10); // 10 MB test file
                 _logger.LogDebug("Starting download speed test using {Url}", testUrl);
 
-                var response = await client.GetAsync(testUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+                var response = await _httpClient.GetAsync(testUrl, HttpCompletionOption.ResponseHeadersRead, ct);
                 response.EnsureSuccessStatusCode();
 
                 using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -605,17 +663,11 @@ namespace Shadowsocks.Services
         {
             try
             {
-                var handler = new HttpClientHandler
-                {
-                    Proxy = new WebProxy($"127.0.0.1:{server.LocalPort}"),
-                    UseProxy = true
-                };
-
-                using var client = new HttpClient(handler);
+                // Use pre-configured HttpClient from factory with proxy settings
 
                 // Generate random data to upload
                 var uploadData = new byte[1024 * 1024]; // 1 MB
-                new Random().NextBytes(uploadData);
+                Random.Shared.NextBytes(uploadData);
 
                 var sw = Stopwatch.StartNew();
                 long totalBytes = 0;
@@ -627,7 +679,7 @@ namespace Shadowsocks.Services
                 for (int i = 0; i < TestDurationSeconds && !ct.IsCancellationRequested; i++)
                 {
                     var content = new ByteArrayContent(uploadData);
-                    var response = await client.PostAsync(uploadUrl, content, ct);
+                    var response = await _httpClient.PostAsync(uploadUrl, content, ct);
 
                     if (response.IsSuccessStatusCode)
                     {
@@ -674,6 +726,7 @@ namespace Shadowsocks.Services
         private readonly IServerService _serverService;
         private readonly ILogger<SpeedTestService> _logger;
         private readonly Subject<SpeedTestResult> _testResults;
+        private readonly SemaphoreSlim _fileLock = new(1, 1);
 
         public IObservable<SpeedTestResult> TestResults => _testResults;
 
@@ -876,29 +929,37 @@ namespace Shadowsocks.Services
 
         public async Task SaveResultAsync(SpeedTestResult result)
         {
-            // Save to database or file
+            // Save to database or file with concurrency protection
             var filePath = Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
                 "speedtest-results.json");
 
-            var existingResults = new List<SpeedTestResult>();
-
-            if (File.Exists(filePath))
+            await _fileLock.WaitAsync();
+            try
             {
-                var json = await File.ReadAllTextAsync(filePath);
-                existingResults = JsonConvert.DeserializeObject<List<SpeedTestResult>>(json) ?? new();
+                var existingResults = new List<SpeedTestResult>();
+
+                if (File.Exists(filePath))
+                {
+                    var json = await File.ReadAllTextAsync(filePath);
+                    existingResults = JsonConvert.DeserializeObject<List<SpeedTestResult>>(json) ?? new();
+                }
+
+                existingResults.Add(result);
+
+                // Keep only last 100 results
+                if (existingResults.Count > 100)
+                {
+                    existingResults = existingResults.OrderByDescending(r => r.Timestamp).Take(100).ToList();
+                }
+
+                var newJson = JsonConvert.SerializeObject(existingResults, Formatting.Indented);
+                await File.WriteAllTextAsync(filePath, newJson);
             }
-
-            existingResults.Add(result);
-
-            // Keep only last 100 results
-            if (existingResults.Count > 100)
+            finally
             {
-                existingResults = existingResults.OrderByDescending(r => r.Timestamp).Take(100).ToList();
+                _fileLock.Release();
             }
-
-            var newJson = JsonConvert.SerializeObject(existingResults, Formatting.Indented);
-            await File.WriteAllTextAsync(filePath, newJson);
         }
 
         public async Task<ServerBenchmark> GetBenchmarkAsync(Guid serverId)
@@ -1130,6 +1191,7 @@ CloudFront configuration:
 ##### Monitoring
 
 Add monitoring to track endpoint health:
+
 ```bash
 # Prometheus metrics endpoint
 curl https://speedtest.your-domain.com/metrics
@@ -1195,7 +1257,7 @@ Use existing speedtest APIs:
 // M-Lab NDT7 Protocol (open source)
 // https://www.measurementlab.net/tests/ndt/
 
-public class MLab​NDT7Client
+public class MLabNdt7Client
 {
     public async Task<SpeedTestResult> RunTestAsync()
     {
